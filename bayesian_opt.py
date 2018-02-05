@@ -105,17 +105,49 @@ class BayesianOpt(object):
         if not self._is_setup:
             raise RuntimeError('Call this function, After Calling setup()')
 
-        if len(self.X) == 0:
-            next_param = self.grid[np.random.choice(len(self.grid))]
-        else:
-            gp = GaussianProcessRegressor()
-            gp.fit(np.asarray(self.X), np.asarray(self.Y))
-            mean, sigma = gp.predict(self.grid, return_std=True)
+        dst = list()
+        choiced_params = list()
+        choiced_means = list()
 
-            masked = np.ma.array(mean + sigma * aggressiveness, mask=self.done)
-            next_param = self.grid[np.argmax(masked)]
+        done = self.done.copy()
 
-        return _to_dict(self.params, next_param)
+        for i in range(n):
+            if len(self.X) == 0:
+                next_param = self.grid[np.random.choice(len(self.grid))]
+            else:
+                gp = GaussianProcessRegressor()
+                gp.fit(np.asarray(self.X + choiced_params),
+                       np.asarray(self.Y + choiced_means))
+                mean, sigma = gp.predict(self.grid, return_std=True)
+
+                masked = np.ma.array(mean + sigma * aggressiveness,
+                                     mask=done)
+                choiced_p = self.grid[np.argmax(masked)]
+                choiced_mean = mean[np.argmax(masked)]
+
+                choiced_params.append(list(choiced_p))
+                choiced_means.append(choiced_mean)
+
+                for i, p in enumerate(self.grid):
+                    if np.allclose(p, choiced_p):
+                        done[i] = True
+                        break
+
+                next_param = choiced_p
+
+            dst.append(_to_dict(self.params, next_param))
+
+        return dst
+
+    def get_progress(self):
+        if len(self.Y) < 2:
+            return 0
+        gp = GaussianProcessRegressor()
+        gp.fit(np.asarray(self.X), np.asarray(self.Y))
+        mean, sigma = gp.predict(self.grid, return_std=True)
+        normalized = np.mean(np.power(sigma, 2))
+        progress = 1.0 / (1.0 + normalized)
+        return progress
 
     def add_result(self, param, result):
         if not self._is_setup:
@@ -135,4 +167,4 @@ class BayesianOpt(object):
             raise RuntimeError('Call this function, After Calling setup()')
 
         idx = np.argmax(self.Y)
-        return _to_dict(self.params, self.grid[idx]), self.Y[idx]
+        return _to_dict(self.params, self.X[idx]), self.Y[idx]
